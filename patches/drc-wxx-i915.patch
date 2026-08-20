@@ -229,3 +229,43 @@
  	if (crtc_state->dsc.compression_enable) {
  		drm_dbg_kms(encoder->base.dev, "Forcing full modeset due to DSC being enabled\n");
  		crtc_state->uapi.mode_changed = true;
+--- a/drivers/gpu/drm/i915/display/icl_dsi.c
++++ b/drivers/gpu/drm/i915/display/icl_dsi.c
+@@ -1307,6 +1307,13 @@
+ 	struct intel_dsi *intel_dsi = enc_to_intel_dsi(encoder);
+ 	enum port port;
+ 	enum transcoder dsi_trans;
++
++	/* Stop command mode updates before disabling the DSI transcoder. */
++	if (is_cmd_mode(intel_dsi)) {
++		for_each_dsi_port(port, intel_dsi->ports)
++			intel_de_rmw(display, DSI_CMD_FRMCTL(port),
++				     DSI_PERIODIC_FRAME_UPDATE_ENABLE, 0);
++	}
+ 
+ 	for_each_dsi_port(port, intel_dsi->ports) {
+ 		dsi_trans = dsi_port_to_transcoder(port);
+@@ -1319,7 +1326,8 @@
+ 		if (intel_de_wait_for_clear_ms(display, TRANSCONF(display, dsi_trans),
+ 					       TRANSCONF_STATE_ENABLE, 50))
+ 			drm_err(display->drm,
+-				"DSI trancoder not disabled\n");
++				"DSI transcoder %s on port %c not disabled\n",
++				transcoder_name(dsi_trans), port_name(port));
+ 	}
+ }
+ 
+@@ -1341,13 +1349,6 @@
+ 	enum transcoder dsi_trans;
+ 	u32 tmp;
+ 	int ret;
+-
+-	/* disable periodic update mode */
+-	if (is_cmd_mode(intel_dsi)) {
+-		for_each_dsi_port(port, intel_dsi->ports)
+-			intel_de_rmw(display, DSI_CMD_FRMCTL(port),
+-				     DSI_PERIODIC_FRAME_UPDATE_ENABLE, 0);
+-	}
+ 
+ 	/* put dsi link in ULPS */
+ 	for_each_dsi_port(port, intel_dsi->ports) {

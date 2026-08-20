@@ -15,9 +15,8 @@
 - 跳过该机型不兼容的 VBT GPIO 操作。
 - 跳过会破坏 BIOS 已初始化状态的 initial display commit。
 - 自动关闭 DSB，并允许该机型沿用固件状态进行 initial fastset。
-
-下一个增量修复（尚未包含）是：关闭 DSI transcoder 前先停止命令模式周期更新，
-并改善 transcoder 关闭超时日志。
+- 关闭 DSI transcoder 前先停止命令模式周期更新。
+- 改善 DSI transcoder 关闭超时日志，记录具体 transcoder 和端口。
 
 ## 其他机器试用
 
@@ -70,3 +69,25 @@ sudo dpkg -i \
 日志仍可能出现 `pipe state doesn't match` 或 `hw.pipe_mode` / `adjusted_mode`
 时序不匹配警告。只要画面正常，不要为消除这些警告修改面板时序。当前 DSI
 suspend/resume 路径也尚未完全修好，合盖进入 `s2idle` 后可能黑屏。
+
+## 合盖黑屏的临时规避
+
+普通锁屏（`Super+L`）不进入 `s2idle`。如果合盖唤醒后出现黑屏，可以暂时将
+合盖动作改为只锁屏：
+
+```bash
+sudo mkdir -p /etc/systemd/logind.conf.d
+sudoedit /etc/systemd/logind.conf.d/90-drc-wxx-lid.conf
+```
+
+写入：
+
+```ini
+[Login]
+HandleLidSwitch=lock
+HandleLidSwitchExternalPower=lock
+```
+
+保存后重启系统使配置生效。这只能避免合盖时进入 `s2idle`，不是 DSI
+suspend/resume 黑屏问题的内核修复。安装新版本后可以先临时执行
+`systemctl suspend` 测试唤醒，再决定是否恢复默认合盖动作。
