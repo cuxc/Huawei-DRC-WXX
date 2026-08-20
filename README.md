@@ -18,19 +18,6 @@
 - 关闭 DSI transcoder 前先停止命令模式周期更新。
 - 改善 DSI transcoder 关闭超时日志，记录具体 transcoder 和端口。
 
-## 其他机器试用
-
-安装包不限制机器型号。其他可能存在类似双链路 DSI 问题的机器需要显式添加：
-
-```text
-i915.force_drc_wxx_workaround=1
-```
-
-该参数默认关闭，因此 DRC-WXX 专用的 DSB、VBT GPIO 和 initial display commit
-行为不会在其他机器上自动启用。不过补丁中的通用双链路 DSI 时序修正会对相应
-的 DSI 控制器生效；强制参数还会跳过部分显示初始化，可能导致黑屏。建议先通过
-GRUB 临时添加，确认可用后再持久化。
-
 ## 验证
 
 workaround 生效时应能看到：
@@ -60,8 +47,9 @@ sudo dpkg -i \
 其中 image 和 headers 用于内核安装；`linux-libc-dev` 是用户空间开发头文件，
 不影响启动，但可以与前两个包一起安装。
 
-安装不限制机器型号。完成后重启，并在 GRUB 中选择 `7.0.12-drc-dsi1`。不要
-添加 `nomodeset`。DSB 已由补丁在 i915 内部按 DMI/强制参数处理，不需要额外
+补丁仅在 DMI 精确匹配 `HUAWEI` / `DRC-WXX` 时启用机型专用 workaround。完成后
+重启，并在 GRUB 中选择 `7.0.12-drc-dsi1`。不要添加 `nomodeset`。DSB 已由补丁
+在 i915 内部按 DMI 处理，不需要额外
 的 `i915.enable_dsb=0` 启动参数。
 
 ## 已知问题
