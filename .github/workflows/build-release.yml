@@ -1,0 +1,128 @@
+name: Build and release kernel
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+    paths:
+      - config/**
+      - patches/**
+      - scripts/download-source.sh
+      - scripts/rebuild.sh
+      - .github/workflows/build-release.yml
+  pull_request:
+    paths:
+      - config/**
+      - patches/**
+      - scripts/download-source.sh
+      - scripts/rebuild.sh
+      - .github/workflows/build-release.yml
+
+concurrency:
+  group: kernel-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Debian packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      artifact: ${{ steps.version.outputs.artifact }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Derive package version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            if [[ "$GITHUB_REF_NAME" =~ ^v([0-9]+([.][0-9]+)*)$ ]]; then
+              version="${BASH_REMATCH[1]}"
+            else
+              echo "Release tags must look like v4 or v5.1" >&2
+              exit 1
+            fi
+          else
+            version="0~ci.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "artifact=huawei-drc-wxx-kernel" >> "$GITHUB_OUTPUT"
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          df -h /
+
+      - name: Install kernel build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            bc binutils bison build-essential cpio debhelper dpkg-dev dwarves \
+            fakeroot flex kmod libdw-dev libelf-dev libncurses-dev libssl-dev \
+            python3 rsync xz-utils zstd
+
+      - name: Download and verify Ubuntu kernel source
+        run: ./scripts/download-source.sh
+
+      - name: Build kernel packages
+        env:
+          KDEB_PKGVERSION: ${{ steps.version.outputs.version }}
+          OUTPUT_DIR: ${{ github.workspace }}/dist
+          WORK_ROOT: ${{ runner.temp }}/drc-wxx-kernel-build
+        run: ./scripts/rebuild.sh
+
+      - name: List packages
+        run: |
+          ls -lh dist
+          cat dist/SHA256SUMS
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.artifact }}
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: dist
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --generate-notes \
+              --title "Huawei DRC-WXX kernel $GITHUB_REF_NAME"
+          fi
+          gh release upload "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber

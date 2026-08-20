@@ -1,0 +1,231 @@
+--- a/drivers/gpu/drm/i915/i915_params.h
++++ b/drivers/gpu/drm/i915/i915_params.h
+@@ -56,6 +56,7 @@
+ 	param(int, mmio_debug, -IS_ENABLED(CONFIG_DRM_I915_DEBUG_MMIO), 0600) \
+ 	param(unsigned int, reset, 3, 0600) \
+ 	param(char *, force_probe, CONFIG_DRM_I915_FORCE_PROBE, 0400) \
++	param(bool, force_drc_wxx_workaround, false, 0400) \
+ 	param(unsigned int, request_timeout_ms, CONFIG_DRM_I915_REQUEST_TIMEOUT, CONFIG_DRM_I915_REQUEST_TIMEOUT ? 0600 : 0) \
+ 	param(unsigned int, lmem_size, 0, 0400) \
+ 	param(unsigned int, lmem_bar_size, 0, 0400) \
+--- a/drivers/gpu/drm/i915/i915_params.c
++++ b/drivers/gpu/drm/i915/i915_params.c
+@@ -85,6 +85,9 @@
+ 	"Force probe options for specified supported devices. "
+ 	"See CONFIG_DRM_I915_FORCE_PROBE for details.");
+ 
++i915_param_named(force_drc_wxx_workaround, bool, 0400,
++	"Force the Huawei DRC-WXX dual-link DSI workaround on other machines.");
++
+ i915_param_named(memtest, bool, 0400,
+ 	"Perform a read/write test of all device memory on module load (default: off)");
+ 
+--- a/drivers/gpu/drm/i915/display/intel_quirks.h
++++ b/drivers/gpu/drm/i915/display/intel_quirks.h
+@@ -22,6 +22,7 @@
+ 	QUIRK_FW_SYNC_LEN,
+ 	QUIRK_EDP_LIMIT_RATE_HBR2,
+ 	QUIRK_DISABLE_EDP_PANEL_REPLAY,
++	QUIRK_DSI_DRC_WXX,
+ };
+ 
+ void intel_init_quirks(struct intel_display *display);
+--- a/drivers/gpu/drm/i915/display/intel_quirks.c
++++ b/drivers/gpu/drm/i915/display/intel_quirks.c
+@@ -7,6 +7,7 @@
+ 
+ #include <drm/drm_print.h>
+ 
++#include "i915_params.h"
+ #include "intel_display_core.h"
+ #include "intel_display_types.h"
+ #include "intel_quirks.h"
+@@ -94,6 +95,14 @@
+ 	drm_info(display->drm, "Applying disable Panel Replay quirk\n");
+ }
+ 
++static void quirk_dsi_drc_wxx(struct intel_display *display)
++{
++	intel_set_quirk(display, QUIRK_DSI_DRC_WXX);
++	display->params.enable_dsb = false;
++	drm_info(display->drm,
++		 "Applying Huawei DRC-WXX dual-link DSI workaround (DSB disabled)\n");
++}
++
+ struct intel_quirk {
+ 	int device;
+ 	int subsystem_vendor;
+@@ -137,6 +146,18 @@
+ }
+ 
+ static const struct intel_dmi_quirk intel_dmi_quirks[] = {
++	{
++		.dmi_id_list = &(const struct dmi_system_id[]) {
++			{
++				.ident = "Huawei DRC-WXX",
++				.matches = {DMI_EXACT_MATCH(DMI_SYS_VENDOR, "HUAWEI"),
++					    DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "DRC-WXX"),
++				},
++			},
++			{ }
++		},
++		.hook = quirk_dsi_drc_wxx,
++	},
+ 	{
+ 		.dmi_id_list = &(const struct dmi_system_id[]) {
+ 			{
+@@ -291,6 +312,13 @@
+ 		if (dmi_check_system(*intel_dmi_quirks[i].dmi_id_list) != 0)
+ 			intel_dmi_quirks[i].hook(display);
+ 	}
++
++	if (i915_modparams.force_drc_wxx_workaround &&
++	    !intel_has_quirk(display, QUIRK_DSI_DRC_WXX)) {
++		quirk_dsi_drc_wxx(display);
++		drm_warn(display->drm,
++			 "Forcing Huawei DRC-WXX DSI workaround by module parameter\n");
++	}
+ }
+ 
+ void intel_init_dpcd_quirks(struct intel_dp *intel_dp,
+--- a/drivers/gpu/drm/i915/display/intel_display_driver.c
++++ b/drivers/gpu/drm/i915/display/intel_display_driver.c
+@@ -532,9 +532,14 @@
+ 	 * are already calculated and there is no assert_plane warnings
+ 	 * during bootup.
+ 	 */
+-	ret = intel_initial_commit(display);
+-	if (ret)
+-		drm_dbg_kms(display->drm, "Initial modeset failed, %d\n", ret);
++	if (intel_has_quirk(display, QUIRK_DSI_DRC_WXX)) {
++		drm_info(display->drm,
++			 "Skipping initial display commit for Huawei DRC-WXX\n");
++	} else {
++		ret = intel_initial_commit(display);
++		if (ret)
++			drm_dbg_kms(display->drm, "Initial modeset failed, %d\n", ret);
++	}
+ 
+ 	intel_overlay_setup(display);
+ 
+--- a/drivers/gpu/drm/i915/display/intel_dsi_vbt.c
++++ b/drivers/gpu/drm/i915/display/intel_dsi_vbt.c
+@@ -46,6 +46,7 @@
+ #include "intel_dsi_vbt.h"
+ #include "intel_gmbus_regs.h"
+ #include "intel_pps_regs.h"
++#include "intel_quirks.h"
+ #include "vlv_dsi.h"
+ #include "vlv_dsi_regs.h"
+ #include "vlv_sideband.h"
+@@ -425,6 +426,12 @@
+ 	drm_dbg_kms(display->drm, "GPIO index %u, number %u, source %u, native %s, set to %s\n",
+ 		    gpio_index, gpio_number, gpio_source, str_yes_no(native), str_on_off(value));
+ 
++	if (intel_has_quirk(display, QUIRK_DSI_DRC_WXX)) {
++		drm_dbg_kms(display->drm,
++			    "Skipping VBT GPIO operation for Huawei DRC-WXX\n");
++		return data + size;
++	}
++
+ 	if (native)
+ 		icl_native_gpio_set_value(display, gpio_number, value);
+ 	else if (DISPLAY_VER(display) >= 9)
+--- a/drivers/gpu/drm/i915/display/icl_dsi.c
++++ b/drivers/gpu/drm/i915/display/icl_dsi.c
+@@ -52,6 +52,7 @@
+ #include "intel_dsi_vbt.h"
+ #include "intel_panel.h"
+ #include "intel_pfit.h"
++#include "intel_quirks.h"
+ #include "intel_vdsc.h"
+ #include "intel_vdsc_regs.h"
+ #include "skl_scaler.h"
+@@ -949,7 +950,6 @@
+ 			       HACTIVE(hactive - 1) | HTOTAL(htotal - 1));
+ 	}
+ 
+-	/* TRANS_HSYNC register to be programmed only for video mode */
+ 	if (is_vid_mode(intel_dsi)) {
+ 		if (intel_dsi->video_mode == NON_BURST_SYNC_PULSE) {
+ 			/* BSPEC: hsync size should be atleast 16 pixels */
+@@ -960,18 +960,18 @@
+ 
+ 		if (hback_porch < 16)
+ 			drm_err(display->drm, "hback porch < 16 pixels\n");
++	}
+ 
+-		if (intel_dsi->dual_link) {
+-			hsync_start /= 2;
+-			hsync_end /= 2;
+-		}
++	if (intel_dsi->dual_link) {
++		hsync_start /= 2;
++		hsync_end /= 2;
++	}
+ 
+-		for_each_dsi_port(port, intel_dsi->ports) {
+-			dsi_trans = dsi_port_to_transcoder(port);
+-			intel_de_write(display,
+-				       TRANS_HSYNC(display, dsi_trans),
+-				       HSYNC_START(hsync_start - 1) | HSYNC_END(hsync_end - 1));
+-		}
++	for_each_dsi_port(port, intel_dsi->ports) {
++		dsi_trans = dsi_port_to_transcoder(port);
++		intel_de_write(display,
++			       TRANS_HSYNC(display, dsi_trans),
++			       HSYNC_START(hsync_start - 1) | HSYNC_END(hsync_end - 1));
+ 	}
+ 
+ 	/* program TRANS_VTOTAL register */
+@@ -1113,7 +1113,7 @@
+ 	 * for dual link/DSI1 TE is from slave DSI1
+ 	 * through GPIO.
+ 	 */
+-	if (is_vid_mode(intel_dsi) || (intel_dsi->ports & BIT(PORT_B)))
++	if (is_vid_mode(intel_dsi) || intel_dsi->ports == BIT(PORT_B))
+ 		return;
+ 
+ 	tmp = intel_de_read(display, UTIL_PIN_CTL);
+@@ -1525,11 +1525,9 @@
+ 	adjusted_mode->crtc_hblank_start = adjusted_mode->crtc_hdisplay;
+ 	adjusted_mode->crtc_hblank_end = adjusted_mode->crtc_htotal;
+ 
+-	if (intel_dsi->operation_mode == INTEL_DSI_VIDEO_MODE) {
+-		if (intel_dsi->dual_link) {
+-			adjusted_mode->crtc_hsync_start *= 2;
+-			adjusted_mode->crtc_hsync_end *= 2;
+-		}
++	if (intel_dsi->dual_link) {
++		adjusted_mode->crtc_hsync_start *= 2;
++		adjusted_mode->crtc_hsync_end *= 2;
+ 	}
+ 	adjusted_mode->crtc_vblank_start = adjusted_mode->crtc_vdisplay;
+ 	adjusted_mode->crtc_vblank_end = adjusted_mode->crtc_vtotal;
+@@ -1765,6 +1763,26 @@
+ static bool gen11_dsi_initial_fastset_check(struct intel_encoder *encoder,
+ 					    struct intel_crtc_state *crtc_state)
+ {
++	struct intel_display *display = to_intel_display(encoder);
++	struct intel_dsi *intel_dsi = enc_to_intel_dsi(encoder);
++
++	if (intel_has_quirk(display, QUIRK_DSI_DRC_WXX))
++		return true;
++
++	/*
++	 * The firmware state of dual-link command-mode panels may not match
++	 * the timings reconstructed from VBT.  A fastset then leaves the two
++	 * DSI links running with different state, which presents as a split
++	 * screen.  Reinitialize both links together during driver takeover.
++	 */
++	if (is_cmd_mode(intel_dsi) && intel_dsi->dual_link) {
++		drm_dbg_kms(encoder->base.dev,
++			    "Forcing full modeset for dual-link command-mode DSI\n");
++		crtc_state->uapi.mode_changed = true;
++
++		return false;
++	}
++
+ 	if (crtc_state->dsc.compression_enable) {
+ 		drm_dbg_kms(encoder->base.dev, "Forcing full modeset due to DSC being enabled\n");
+ 		crtc_state->uapi.mode_changed = true;

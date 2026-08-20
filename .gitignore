@@ -1,0 +1,15 @@
+# Build products are published by GitHub Actions, not committed.
+packages/*.deb
+packages/*.sha256
+packages/*.txt
+packages/SHA256SUMS
+
+# The Ubuntu source package is downloaded and verified during the build.
+source/*.deb
+source/*.deb.part
+
+# Local build directories and editor files.
+.build/
+.DS_Store
+*.swp
+*~
