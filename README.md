@@ -79,3 +79,7 @@ HandleLidSwitchExternalPower=lock
 保存后重启系统使配置生效。这只能避免合盖时进入 `s2idle`，不是 DSI
 suspend/resume 黑屏问题的内核修复。安装新版本后可以先临时执行
 `systemctl suspend` 测试唤醒，再决定是否恢复默认合盖动作。
+
+## 致谢
+
+感谢 [Linux.do](https://linux.do) 的 token 支持
