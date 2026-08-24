@@ -1,8 +1,8 @@
 # Huawei DRC-WXX 内屏修复内核
 
 本仓库为 Huawei MateBook E（DMI：`HUAWEI` / `DRC-WXX`）构建带有 i915
-内屏修复的 Ubuntu 内核。仓库只保存当前补丁和构建配置；升级时直接覆盖现有
-补丁，不在目录中并行保留多个版本。
+内屏修复的 Ubuntu/Fedora 内核。仓库只保存当前补丁和构建配置；升级时直接
+覆盖现有补丁，不在目录中并行保留多个版本。
 
 构建、GitHub Actions 和 Release 使用方法见 [BUILD.md](BUILD.md)。
 
@@ -33,7 +33,7 @@ Skipping initial display commit for Huawei DRC-WXX
 ./scripts/diagnose.sh
 ```
 
-## 安装
+## Ubuntu 安装
 
 从 Actions artifact 或 Release 下载三个 `.deb` 包，在下载目录安装：
 
@@ -51,6 +51,25 @@ sudo dpkg -i \
 重启，并在 GRUB 中选择 `7.0.12-drc-dsi1`。不要添加 `nomodeset`。DSB 已由补丁
 在 i915 内部按 DMI 处理，不需要额外
 的 `i915.enable_dsb=0` 启动参数。
+
+## Fedora 安装
+
+从 Actions 的 `huawei-drc-wxx-kernel-fedora` artifact 或 Release 下载 RPM，
+在下载目录安装内核；`kernel-devel` 用于 akmods/DKMS 等外部模块：
+
+```bash
+sudo dnf install \
+  ./kernel-7.0.12_drc_dsi1-*.x86_64.rpm \
+  ./kernel-devel-7.0.12_drc_dsi1-*.x86_64.rpm
+```
+
+`kernel-headers` 是可选的用户空间开发头文件，不影响启动。安装后重启，从
+GRUB 选择 `7.0.12-drc-dsi1`。不要添加 `nomodeset` 或
+`i915.enable_dsb=0`。
+
+该内核没有使用 Fedora 官方 Secure Boot 密钥签名。启用了 Secure Boot 的
+设备需要先关闭 Secure Boot，或自行签名并登记密钥，否则固件/引导器可能拒绝
+加载内核或模块。
 
 ## 已知问题
 

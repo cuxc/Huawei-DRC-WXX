@@ -30,16 +30,38 @@ permissions:
 
 jobs:
   build:
-    name: Build Debian packages
+    name: Build ${{ matrix.name }} packages
     runs-on: ubuntu-24.04
     timeout-minutes: 360
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      artifact: ${{ steps.version.outputs.artifact }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Debian
+            format: deb
+            artifact: huawei-drc-wxx-kernel
+          - name: Fedora
+            format: rpm
+            artifact: huawei-drc-wxx-kernel-fedora
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          df -h /
+
+      - name: Install Debian kernel build dependencies
+        if: matrix.format == 'deb'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            bc binutils bison build-essential bzip2 ca-certificates cpio curl \
+            debhelper dpkg-dev dwarves fakeroot flex git kmod libdw-dev \
+            libelf-dev libncurses-dev libssl-dev patch python3 rsync xz-utils \
+            zstd
 
       - name: Derive package version
         id: version
@@ -58,40 +80,54 @@ jobs:
           fi
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "artifact=huawei-drc-wxx-kernel" >> "$GITHUB_OUTPUT"
-
-      - name: Free runner disk space
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
-          df -h /
-
-      - name: Install kernel build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            bc binutils bison build-essential cpio debhelper dpkg-dev dwarves \
-            fakeroot flex kmod libdw-dev libelf-dev libncurses-dev libssl-dev \
-            python3 rsync xz-utils zstd
 
       - name: Download and verify Ubuntu kernel source
         run: ./scripts/download-source.sh
 
-      - name: Build kernel packages
+      - name: Build Debian kernel packages
+        if: matrix.format == 'deb'
         env:
+          PACKAGE_FORMAT: deb
           KDEB_PKGVERSION: ${{ steps.version.outputs.version }}
+          CHECKSUM_FILE: SHA256SUMS.deb
           OUTPUT_DIR: ${{ github.workspace }}/dist
           WORK_ROOT: ${{ runner.temp }}/drc-wxx-kernel-build
         run: ./scripts/rebuild.sh
 
+      - name: Build Fedora kernel packages
+        if: matrix.format == 'rpm'
+        env:
+          RPM_PACKAGE_RELEASE: ${{ github.run_number }}
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --volume "$RUNNER_TEMP:/build" \
+            --workdir /workspace \
+            --env RPM_PACKAGE_RELEASE \
+            fedora:43 \
+            bash -c '
+              set -euo pipefail
+              dnf install -y \
+                bc binutils bison bzip2 cpio curl diffutils dwarves \
+                elfutils-devel elfutils-libelf-devel findutils flex gcc git \
+                gzip hostname kmod make ncurses-devel openssl openssl-devel \
+                patch perl python3 rpm-build rsync tar xz zstd
+              PACKAGE_FORMAT=rpm \
+              CHECKSUM_FILE=SHA256SUMS.rpm \
+              OUTPUT_DIR=/workspace/dist \
+              WORK_ROOT=/build/drc-wxx-kernel-build \
+                ./scripts/rebuild.sh
+            '
+
       - name: List packages
         run: |
           ls -lh dist
-          cat dist/SHA256SUMS
+          cat dist/SHA256SUMS.*
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.version.outputs.artifact }}
+          name: ${{ matrix.artifact }}
           path: dist/*
           if-no-files-found: error
           compression-level: 0
@@ -109,8 +145,14 @@ jobs:
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.build.outputs.artifact }}
-          path: dist
+          name: huawei-drc-wxx-kernel
+          path: dist/deb
+
+      - name: Download Fedora build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: huawei-drc-wxx-kernel-fedora
+          path: dist/rpm
 
       - name: Create GitHub Release
         env:
@@ -123,6 +165,6 @@ jobs:
               --generate-notes \
               --title "Huawei DRC-WXX kernel $GITHUB_REF_NAME"
           fi
-          gh release upload "$GITHUB_REF_NAME" dist/* \
+          gh release upload "$GITHUB_REF_NAME" dist/deb/* dist/rpm/* \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
