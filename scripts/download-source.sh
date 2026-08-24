@@ -11,7 +11,8 @@ SOURCE_DEB=$SOURCE_DIR/$SOURCE_NAME
 mkdir -p "$SOURCE_DIR"
 
 if [ -f "$SOURCE_DEB" ]; then
-    if printf '%s  %s\n' "$SOURCE_SHA256" "$SOURCE_DEB" | sha256sum --check --status; then
+    if printf '%s  %s\n' "$SOURCE_SHA256" "$SOURCE_DEB" | \
+        sha256sum -c - >/dev/null 2>&1; then
         printf 'Using verified source package: %s\n' "$SOURCE_DEB"
         exit 0
     fi
@@ -24,4 +25,4 @@ printf 'Downloading %s\n' "$SOURCE_URL"
 curl --fail --location --retry 3 --retry-all-errors \
     --output "$SOURCE_DEB.part" "$SOURCE_URL"
 mv "$SOURCE_DEB.part" "$SOURCE_DEB"
-printf '%s  %s\n' "$SOURCE_SHA256" "$SOURCE_DEB" | sha256sum --check
+printf '%s  %s\n' "$SOURCE_SHA256" "$SOURCE_DEB" | sha256sum -c -

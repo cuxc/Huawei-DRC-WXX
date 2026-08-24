@@ -1,8 +1,9 @@
 # Build products are published by GitHub Actions, not committed.
 packages/*.deb
+packages/*.rpm
 packages/*.sha256
 packages/*.txt
-packages/SHA256SUMS
+packages/SHA256SUMS*
 
 # The Ubuntu source package is downloaded and verified during the build.
 source/*.deb
