@@ -44,60 +44,9 @@
  	{
  		.dmi_id_list = &(const struct dmi_system_id[]) {
  			{
---- a/drivers/gpu/drm/i915/display/intel_display_driver.c
-+++ b/drivers/gpu/drm/i915/display/intel_display_driver.c
-@@ -532,9 +532,14 @@
- 	 * are already calculated and there is no assert_plane warnings
- 	 * during bootup.
- 	 */
--	ret = intel_initial_commit(display);
--	if (ret)
--		drm_dbg_kms(display->drm, "Initial modeset failed, %d\n", ret);
-+	if (intel_has_quirk(display, QUIRK_DSI_DRC_WXX)) {
-+		drm_info(display->drm,
-+			 "Skipping initial display commit for Huawei DRC-WXX\n");
-+	} else {
-+		ret = intel_initial_commit(display);
-+		if (ret)
-+			drm_dbg_kms(display->drm, "Initial modeset failed, %d\n", ret);
-+	}
- 
- 	intel_overlay_setup(display);
- 
---- a/drivers/gpu/drm/i915/display/intel_dsi_vbt.c
-+++ b/drivers/gpu/drm/i915/display/intel_dsi_vbt.c
-@@ -46,6 +46,7 @@
- #include "intel_dsi_vbt.h"
- #include "intel_gmbus_regs.h"
- #include "intel_pps_regs.h"
-+#include "intel_quirks.h"
- #include "vlv_dsi.h"
- #include "vlv_dsi_regs.h"
- #include "vlv_sideband.h"
-@@ -425,6 +426,12 @@
- 	drm_dbg_kms(display->drm, "GPIO index %u, number %u, source %u, native %s, set to %s\n",
- 		    gpio_index, gpio_number, gpio_source, str_yes_no(native), str_on_off(value));
- 
-+	if (intel_has_quirk(display, QUIRK_DSI_DRC_WXX)) {
-+		drm_dbg_kms(display->drm,
-+			    "Skipping VBT GPIO operation for Huawei DRC-WXX\n");
-+		return data + size;
-+	}
-+
- 	if (native)
- 		icl_native_gpio_set_value(display, gpio_number, value);
- 	else if (DISPLAY_VER(display) >= 9)
 --- a/drivers/gpu/drm/i915/display/icl_dsi.c
 +++ b/drivers/gpu/drm/i915/display/icl_dsi.c
-@@ -52,6 +52,7 @@
- #include "intel_dsi_vbt.h"
- #include "intel_panel.h"
- #include "intel_pfit.h"
-+#include "intel_quirks.h"
- #include "intel_vdsc.h"
- #include "intel_vdsc_regs.h"
- #include "skl_scaler.h"
-@@ -949,7 +950,6 @@
+@@ -949,7 +949,6 @@
  			       HACTIVE(hactive - 1) | HTOTAL(htotal - 1));
  	}
  
@@ -105,7 +54,7 @@
  	if (is_vid_mode(intel_dsi)) {
  		if (intel_dsi->video_mode == NON_BURST_SYNC_PULSE) {
  			/* BSPEC: hsync size should be atleast 16 pixels */
-@@ -960,18 +960,18 @@
+@@ -960,18 +959,18 @@
  
  		if (hback_porch < 16)
  			drm_err(display->drm, "hback porch < 16 pixels\n");
@@ -134,7 +83,7 @@
  	}
  
  	/* program TRANS_VTOTAL register */
-@@ -1113,7 +1113,7 @@
+@@ -1113,7 +1112,7 @@
  	 * for dual link/DSI1 TE is from slave DSI1
  	 * through GPIO.
  	 */
@@ -143,7 +92,7 @@
  		return;
  
  	tmp = intel_de_read(display, UTIL_PIN_CTL);
-@@ -1525,11 +1525,9 @@
+@@ -1525,11 +1524,9 @@
  	adjusted_mode->crtc_hblank_start = adjusted_mode->crtc_hdisplay;
  	adjusted_mode->crtc_hblank_end = adjusted_mode->crtc_htotal;
  
@@ -158,15 +107,11 @@
  	}
  	adjusted_mode->crtc_vblank_start = adjusted_mode->crtc_vdisplay;
  	adjusted_mode->crtc_vblank_end = adjusted_mode->crtc_vtotal;
-@@ -1765,6 +1763,26 @@
+@@ -1765,6 +1762,22 @@
  static bool gen11_dsi_initial_fastset_check(struct intel_encoder *encoder,
  					    struct intel_crtc_state *crtc_state)
  {
-+	struct intel_display *display = to_intel_display(encoder);
 +	struct intel_dsi *intel_dsi = enc_to_intel_dsi(encoder);
-+
-+	if (intel_has_quirk(display, QUIRK_DSI_DRC_WXX))
-+		return true;
 +
 +	/*
 +	 * The firmware state of dual-link command-mode panels may not match
